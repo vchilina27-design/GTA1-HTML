@@ -77,6 +77,15 @@ function cleanupMergeArtifacts() {
     }
   }
 
+  const allowedRootIds = new Set(["hud", "game", "mobile-controls"]);
+  const rootChildren = Array.from(document.body.children);
+  for (const el of rootChildren) {
+    if (el.tagName === "SCRIPT") continue;
+    if (!allowedRootIds.has(el.id)) {
+      el.remove();
+    }
+  }
+
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   const toRemove = [];
 
@@ -86,9 +95,13 @@ function cleanupMergeArtifacts() {
     if (!value) continue;
 
     const looksLikeConflictTrash =
+      /^<{7}/.test(value) ||
+      /^={7}$/.test(value) ||
+      /^>{7}/.test(value) ||
       /^codex\//i.test(value) ||
       /^main(\s+main)?$/i.test(value) ||
-      /^x\d+[a-z0-9-]*$/i.test(value);
+      /^x\d+[a-z0-9-]*$/i.test(value) ||
+      /^##\s*Что уже есть$/i.test(value);
 
     if (looksLikeConflictTrash && node.parentElement?.tagName !== "SCRIPT") {
       toRemove.push(node);
