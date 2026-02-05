@@ -67,6 +67,17 @@ body {
   font-size: 0.86rem;
 }
 
+#gear,
+#speed {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+#gear {
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+
 #mobile-controls {
   position: fixed;
   inset: 0;

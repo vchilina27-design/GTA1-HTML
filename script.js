@@ -1,6 +1,7 @@
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const speedEl = document.getElementById("speed");
+const gearEl = document.getElementById("gear");
 const positionEl = document.getElementById("position");
 
 const joystickBase = document.getElementById("joystick-base");
@@ -20,20 +21,34 @@ const player = {
   y: world.height / 2,
   angle: -Math.PI / 2,
   speed: 0,
+  vx: 0,
+  vy: 0,
+  angularVelocity: 0,
   width: 26,
   height: 44,
-  maxSpeed: 6.3,
-  accel: 0.18,
-  brake: 0.26,
-  friction: 0.05,
-  turnRate: 0.042,
+  accelForward: 0.19,
+  accelReverse: 0.16,
+  maxSpeedForward: 6.5,
+  maxSpeedReverse: 2.9,
+  steerAtLowSpeed: 0.055,
+  steerAtHighSpeed: 0.018,
+  drag: 0.085,
+  angularDamping: 0.12,
 };
 
 const controls = {
   accelerate: false,
   brake: false,
   steer: 0,
+  brakeHoldMs: 0,
+  handbrake: false,
 };
+
+const hudState = {
+  stableSpeedKmh: 0,
+};
+
+const HANDBRAKE_DELAY_MS = 260;
 
 const keyState = new Set();
 const joystickState = {
@@ -168,40 +183,91 @@ function updateControlsFromKeyboard() {
   }
 }
 
-function updatePhysics() {
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function updatePhysics(deltaScale = 1) {
   updateControlsFromKeyboard();
 
-  if (controls.accelerate) {
-    player.speed += player.accel;
-  }
-
   if (controls.brake) {
-    if (player.speed > 0) player.speed -= player.brake;
-    else player.speed -= player.accel * 0.65;
+    controls.brakeHoldMs += 16.67 * deltaScale;
+  } else {
+    controls.brakeHoldMs = 0;
+  }
+  controls.handbrake = controls.brakeHoldMs > HANDBRAKE_DELAY_MS;
+
+  const fx = Math.cos(player.angle);
+  const fy = Math.sin(player.angle);
+  const rightX = -fy;
+  const rightY = fx;
+
+  let forwardSpeed = player.vx * fx + player.vy * fy;
+  let lateralSpeed = player.vx * rightX + player.vy * rightY;
+
+  const steerBlend = clamp(Math.abs(forwardSpeed) / player.maxSpeedForward, 0, 1);
+  const steerPower = lerp(player.steerAtLowSpeed, player.steerAtHighSpeed, steerBlend);
+  const steerDir = forwardSpeed >= 0 ? 1 : -1;
+
+  player.angularVelocity += controls.steer * steerPower * steerDir * deltaScale;
+  player.angularVelocity *= Math.max(0, 1 - player.angularDamping * deltaScale);
+  player.angle += player.angularVelocity * deltaScale;
+
+  const handbrakeMultiplier = controls.handbrake ? 2.6 : 1;
+
+  if (controls.accelerate && !controls.brake) {
+    player.vx += fx * player.accelForward * deltaScale;
+    player.vy += fy * player.accelForward * deltaScale;
   }
 
-  if (!controls.accelerate && !controls.brake) {
-    if (Math.abs(player.speed) < player.friction) {
-      player.speed = 0;
+  if (controls.brake && !controls.accelerate) {
+    if (forwardSpeed > 0.2) {
+      player.vx -= fx * player.accelReverse * 1.5 * handbrakeMultiplier * deltaScale;
+      player.vy -= fy * player.accelReverse * 1.5 * handbrakeMultiplier * deltaScale;
     } else {
-      player.speed -= Math.sign(player.speed) * player.friction;
+      player.vx -= fx * player.accelReverse * deltaScale;
+      player.vy -= fy * player.accelReverse * deltaScale;
     }
   }
 
-  player.speed = clamp(player.speed, -2.6, player.maxSpeed);
+  const dragScale = player.drag * (controls.handbrake ? 2.3 : 1);
+  player.vx *= Math.max(0, 1 - dragScale * deltaScale);
+  player.vy *= Math.max(0, 1 - dragScale * deltaScale);
 
-  if (player.speed !== 0) {
-    const steerFactor = clamp(Math.abs(player.speed) / player.maxSpeed, 0.22, 1);
-    player.angle += controls.steer * player.turnRate * steerFactor;
-  }
+  forwardSpeed = player.vx * fx + player.vy * fy;
+  lateralSpeed = player.vx * rightX + player.vy * rightY;
 
-  player.x += Math.cos(player.angle) * player.speed;
-  player.y += Math.sin(player.angle) * player.speed;
+  const lateralDamping = controls.handbrake ? 0.42 : 0.18;
+  lateralSpeed *= Math.max(0, 1 - lateralDamping * deltaScale);
+
+  forwardSpeed = clamp(forwardSpeed, -player.maxSpeedReverse, player.maxSpeedForward);
+
+  player.vx = fx * forwardSpeed + rightX * lateralSpeed;
+  player.vy = fy * forwardSpeed + rightY * lateralSpeed;
+
+  player.speed = forwardSpeed;
+
+  player.x += player.vx * deltaScale;
+  player.y += player.vy * deltaScale;
 
   player.x = clamp(player.x, 40, world.width - 40);
   player.y = clamp(player.y, 40, world.height - 40);
 
-  speedEl.textContent = Math.round(Math.abs(player.speed) * 18);
+  if (player.x <= 40 || player.x >= world.width - 40) player.vx *= 0.3;
+  if (player.y <= 40 || player.y >= world.height - 40) player.vy *= 0.3;
+
+  const speedKmh = Math.hypot(player.vx, player.vy) * 18;
+  hudState.stableSpeedKmh += (speedKmh - hudState.stableSpeedKmh) * 0.18;
+
+  let gear = "N";
+  if (forwardSpeed < -0.15 || (controls.brake && !controls.accelerate && Math.abs(forwardSpeed) < 0.3)) {
+    gear = "R";
+  } else if (forwardSpeed > 0.15 || controls.accelerate) {
+    gear = "D";
+  }
+
+  gearEl.textContent = gear;
+  speedEl.textContent = hudState.stableSpeedKmh.toFixed(1);
   positionEl.textContent = `${Math.round(player.x)}, ${Math.round(player.y)}`;
 }
 
@@ -266,23 +332,40 @@ function drawPlayer(cameraX, cameraY) {
   ctx.translate(drawX, drawY);
   ctx.rotate(player.angle);
 
-  ctx.fillStyle = "#d7c94b";
-  ctx.fillRect(-player.width / 2, -player.height / 2, player.width, player.height);
+  const halfW = player.width / 2;
+  const halfH = player.height / 2;
+  const indicatorOn = controls.handbrake || Math.abs(player.angularVelocity) > 0.03;
 
-  ctx.fillStyle = "#2a2f38";
-  ctx.fillRect(-player.width / 2 + 4, -player.height / 2 + 6, player.width - 8, player.height - 20);
+  ctx.fillStyle = "#caa94c";
+  ctx.fillRect(-halfW, -halfH, player.width, player.height);
 
-  ctx.fillStyle = "#d83145";
-  ctx.fillRect(-3, -player.height / 2 + 2, 6, 10);
+  ctx.fillStyle = "#263343";
+  ctx.fillRect(-halfW + 3, -halfH + 7, player.width - 6, player.height - 18);
+
+  ctx.fillStyle = "#f7efb4";
+  ctx.fillRect(-halfW + 3, -halfH + 2, 6, 3);
+  ctx.fillRect(halfW - 9, -halfH + 2, 6, 3);
+
+  ctx.fillStyle = controls.handbrake ? "#ff4d59" : "#a81931";
+  ctx.fillRect(-halfW + 4, halfH - 5, 5, 3);
+  ctx.fillRect(halfW - 9, halfH - 5, 5, 3);
+
+  ctx.fillStyle = indicatorOn ? "#8dfad9" : "#2d6159";
+  const indicatorX = controls.steer < 0 ? -halfW + 2 : halfW - 8;
+  ctx.fillRect(indicatorX, -2, 6, 4);
 
   ctx.restore();
 }
 
-function gameLoop() {
+let lastFrame = performance.now();
+
+function gameLoop(now) {
   const viewW = window.innerWidth;
   const viewH = window.innerHeight;
+  const deltaScale = clamp((now - lastFrame) / 16.6667, 0.45, 2);
+  lastFrame = now;
 
-  updatePhysics();
+  updatePhysics(deltaScale);
 
   const cameraX = clamp(player.x - viewW / 2, 0, world.width - viewW);
   const cameraY = clamp(player.y - viewH / 2, 0, world.height - viewH);
