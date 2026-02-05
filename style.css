@@ -125,6 +125,7 @@ body {
 
 .control-btn.hidden {
   opacity: 0.35;
+  pointer-events: none;
 }
 
 .control-btn:active,

@@ -3,6 +3,8 @@ const ctx = canvas.getContext("2d");
 const speedEl = document.getElementById("speed");
 const positionEl = document.getElementById("position");
 const modeEl = document.getElementById("mode");
+const wantedEl = document.getElementById("wanted");
+const zoneEl = document.getElementById("zone");
 
 const joystickBase = document.getElementById("joystick-base");
 const joystickStick = document.getElementById("joystick-stick");
@@ -15,6 +17,13 @@ const world = {
   height: 3200,
   block: 240,
   road: 72,
+};
+
+const policeStation = {
+  x: world.width * 0.74,
+  y: world.height * 0.25,
+  width: 250,
+  height: 180,
 };
 
 const car = {
@@ -40,6 +49,9 @@ const character = {
 
 const gameState = {
   mode: "driving",
+  wantedLevel: 0,
+  policeCooldown: 0,
+  jailTimer: 0,
 };
 
 const keyboard = {
@@ -66,6 +78,19 @@ const joystickState = {
   radius: 52,
 };
 
+const npcs = Array.from({ length: 16 }, (_, index) => {
+  const seed = index + 1;
+  return {
+    x: 280 + (seed * 173) % (world.width - 560),
+    y: 280 + (seed * 257) % (world.height - 560),
+    angle: (seed * 0.7) % (Math.PI * 2),
+    speed: 0.8 + (seed % 5) * 0.14,
+    dirTimer: 60 + (seed * 9) % 110,
+  };
+});
+
+const policeUnits = [];
+
 function resizeCanvas() {
   const dpr = Math.max(window.devicePixelRatio || 1, 1);
   canvas.width = Math.floor(window.innerWidth * dpr);
@@ -82,6 +107,10 @@ function clamp(value, min, max) {
 
 function distance(aX, aY, bX, bY) {
   return Math.hypot(aX - bX, aY - bY);
+}
+
+function randomDirection() {
+  return Math.random() * Math.PI * 2;
 }
 
 function setDrivingMode() {
@@ -114,6 +143,8 @@ function setKeyboardFlag(code, value) {
 
 function setupKeyboard() {
   window.addEventListener("keydown", (event) => {
+    const directional = ["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+    if (directional.includes(event.code)) event.preventDefault();
     setKeyboardFlag(event.code, true);
     if (event.code === "KeyE") {
       event.preventDefault();
@@ -296,6 +327,99 @@ function updateOnFoot() {
   }
 }
 
+function updateNPCs() {
+  npcs.forEach((npc) => {
+    npc.dirTimer -= 1;
+
+    if (npc.dirTimer <= 0) {
+      npc.angle += (Math.random() - 0.5) * 1.6;
+      npc.dirTimer = 80 + Math.floor(Math.random() * 140);
+    }
+
+    npc.x += Math.cos(npc.angle) * npc.speed;
+    npc.y += Math.sin(npc.angle) * npc.speed;
+
+    const margin = 70;
+    if (npc.x < margin || npc.x > world.width - margin || npc.y < margin || npc.y > world.height - margin) {
+      npc.angle = randomDirection();
+    }
+
+    npc.x = clamp(npc.x, margin, world.width - margin);
+    npc.y = clamp(npc.y, margin, world.height - margin);
+  });
+}
+
+function spawnPolice() {
+  if (policeUnits.length >= 6) return;
+  policeUnits.push({
+    x: policeStation.x + policeStation.width / 2 + (Math.random() - 0.5) * 80,
+    y: policeStation.y + policeStation.height + 30 + Math.random() * 60,
+    speed: 2 + Math.random() * 1.2,
+    angle: randomDirection(),
+  });
+}
+
+function updatePolice() {
+  if (gameState.wantedLevel > 0) {
+    gameState.policeCooldown -= 1;
+    if (gameState.policeCooldown <= 0) {
+      spawnPolice();
+      gameState.policeCooldown = clamp(150 - gameState.wantedLevel * 30, 45, 140);
+    }
+  }
+
+  const targetX = gameState.mode === "driving" ? car.x : character.x;
+  const targetY = gameState.mode === "driving" ? car.y : character.y;
+
+  for (let i = policeUnits.length - 1; i >= 0; i -= 1) {
+    const police = policeUnits[i];
+    const dx = targetX - police.x;
+    const dy = targetY - police.y;
+    police.angle = Math.atan2(dy, dx);
+    police.x += Math.cos(police.angle) * police.speed;
+    police.y += Math.sin(police.angle) * police.speed;
+
+    police.x = clamp(police.x, 28, world.width - 28);
+    police.y = clamp(police.y, 28, world.height - 28);
+
+    if (distance(police.x, police.y, targetX, targetY) < 26) {
+      gameState.wantedLevel = 0;
+      policeUnits.length = 0;
+      gameState.jailTimer = 220;
+      car.speed = 0;
+      setOnFootMode();
+      character.x = policeStation.x + policeStation.width / 2;
+      character.y = policeStation.y + policeStation.height + 40;
+      character.angle = 0;
+      break;
+    }
+
+    if (gameState.wantedLevel === 0 && distance(police.x, police.y, targetX, targetY) > 900) {
+      policeUnits.splice(i, 1);
+    }
+  }
+}
+
+function updateWantedLevel() {
+  if (gameState.mode !== "driving") return;
+
+  const nearNPC = npcs.some((npc) => distance(car.x, car.y, npc.x, npc.y) < 28);
+  if (nearNPC) {
+    gameState.wantedLevel = clamp(gameState.wantedLevel + 1, 0, 5);
+    gameState.policeCooldown = Math.min(gameState.policeCooldown, 20);
+
+    npcs.forEach((npc) => {
+      if (distance(car.x, car.y, npc.x, npc.y) < 32) {
+        npc.angle = randomDirection();
+        npc.x += Math.cos(npc.angle) * 24;
+        npc.y += Math.sin(npc.angle) * 24;
+      }
+    });
+  } else if (Math.abs(car.speed) < 1.2 && gameState.wantedLevel > 0 && Math.random() < 0.005) {
+    gameState.wantedLevel -= 1;
+  }
+}
+
 function updateActionButtonState() {
   if (gameState.mode === "driving") {
     actionBtn.textContent = "Выйти";
@@ -312,6 +436,10 @@ function updatePhysics() {
   if (gameState.mode === "driving") updateDriving();
   else updateOnFoot();
 
+  updateNPCs();
+  updateWantedLevel();
+  updatePolice();
+
   car.x = clamp(car.x, 40, world.width - 40);
   car.y = clamp(car.y, 40, world.height - 40);
   character.x = clamp(character.x, 25, world.width - 25);
@@ -323,7 +451,16 @@ function updatePhysics() {
   const activeY = gameState.mode === "driving" ? car.y : character.y;
   const activeSpeed = gameState.mode === "driving" ? Math.abs(car.speed) * 18 : 0;
 
+  if (gameState.jailTimer > 0) {
+    gameState.jailTimer -= 1;
+    zoneEl.textContent = "Участок";
+  } else {
+    const nearStation = distance(activeX, activeY, policeStation.x + policeStation.width / 2, policeStation.y + policeStation.height / 2) < 220;
+    zoneEl.textContent = nearStation ? "Около участка" : "Город";
+  }
+
   speedEl.textContent = Math.round(activeSpeed);
+  wantedEl.textContent = gameState.wantedLevel;
   positionEl.textContent = `${Math.round(activeX)}, ${Math.round(activeY)}`;
 }
 
@@ -372,6 +509,32 @@ function drawCityBlock(drawX, drawY, block, road, x, y) {
   drawRoadMarkings(drawX, drawY, block, road);
 }
 
+function drawPoliceStation(cameraX, cameraY) {
+  const x = policeStation.x - cameraX;
+  const y = policeStation.y - cameraY;
+
+  ctx.fillStyle = "#455a76";
+  ctx.fillRect(x, y, policeStation.width, policeStation.height);
+
+  ctx.fillStyle = "#24364f";
+  ctx.fillRect(x + 15, y + 15, policeStation.width - 30, policeStation.height - 50);
+
+  ctx.fillStyle = "#d8e8ff";
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col < 6; col += 1) {
+      ctx.fillRect(x + 25 + col * 34, y + 25 + row * 24, 20, 12);
+    }
+  }
+
+  ctx.fillStyle = "#1f2938";
+  ctx.fillRect(x + policeStation.width / 2 - 26, y + policeStation.height - 40, 52, 40);
+
+  ctx.fillStyle = "#8fc1ff";
+  ctx.font = "700 19px Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("POLICE", x + policeStation.width / 2, y + policeStation.height - 54);
+}
+
 function drawWorld(cameraX, cameraY, viewW, viewH) {
   ctx.fillStyle = "#1b2433";
   ctx.fillRect(0, 0, viewW, viewH);
@@ -386,6 +549,8 @@ function drawWorld(cameraX, cameraY, viewW, viewH) {
       drawCityBlock(x - cameraX, y - cameraY, block, road, x, y);
     }
   }
+
+  drawPoliceStation(cameraX, cameraY);
 
   ctx.strokeStyle = "rgba(255,255,255,0.09)";
   ctx.lineWidth = 1;
@@ -422,20 +587,20 @@ function drawCar(cameraX, cameraY) {
   ctx.restore();
 }
 
-function drawCharacter(cameraX, cameraY) {
-  const drawX = character.x - cameraX;
-  const drawY = character.y - cameraY;
+function drawCharacterEntity(entity, cameraX, cameraY, bodyColor) {
+  const drawX = entity.x - cameraX;
+  const drawY = entity.y - cameraY;
 
   ctx.save();
   ctx.translate(drawX, drawY);
-  ctx.rotate(character.angle);
+  ctx.rotate(entity.angle);
 
   ctx.fillStyle = "#ffd7b5";
   ctx.beginPath();
   ctx.arc(0, -5, 6, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = "#67d6ff";
+  ctx.fillStyle = bodyColor;
   ctx.fillRect(-5, 2, 10, 12);
 
   ctx.strokeStyle = "#1f2530";
@@ -445,6 +610,32 @@ function drawCharacter(cameraX, cameraY) {
   ctx.lineTo(0, -9);
   ctx.stroke();
   ctx.restore();
+}
+
+function drawNPCs(cameraX, cameraY) {
+  npcs.forEach((npc) => drawCharacterEntity(npc, cameraX, cameraY, "#7bd68a"));
+}
+
+function drawPlayer(cameraX, cameraY) {
+  drawCharacterEntity(character, cameraX, cameraY, "#67d6ff");
+}
+
+function drawPolice(cameraX, cameraY) {
+  policeUnits.forEach((unit) => {
+    ctx.save();
+    ctx.translate(unit.x - cameraX, unit.y - cameraY);
+    ctx.rotate(unit.angle + Math.PI / 2);
+
+    ctx.fillStyle = "#a8c2ff";
+    ctx.fillRect(-10, -14, 20, 28);
+
+    ctx.fillStyle = "#21395a";
+    ctx.fillRect(-10, -14, 20, 7);
+
+    ctx.fillStyle = "#ff5b6b";
+    ctx.fillRect(-4, -16, 8, 4);
+    ctx.restore();
+  });
 }
 
 function gameLoop() {
@@ -459,8 +650,10 @@ function gameLoop() {
   const cameraY = clamp(targetY - viewH / 2, 0, world.height - viewH);
 
   drawWorld(cameraX, cameraY, viewW, viewH);
+  drawNPCs(cameraX, cameraY);
+  drawPolice(cameraX, cameraY);
   drawCar(cameraX, cameraY);
-  if (gameState.mode === "onFoot") drawCharacter(cameraX, cameraY);
+  if (gameState.mode === "onFoot") drawPlayer(cameraX, cameraY);
 
   requestAnimationFrame(gameLoop);
 }
