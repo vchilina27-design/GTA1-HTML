@@ -7,6 +7,7 @@ const joystickBase = document.getElementById("joystick-base");
 const joystickStick = document.getElementById("joystick-stick");
 const accelerateBtn = document.getElementById("btn-accelerate");
 const brakeBtn = document.getElementById("btn-brake");
+const actionBtn = document.getElementById("btn-action");
 
 const world = {
   width: 2600,
@@ -27,12 +28,16 @@ const player = {
   brake: 0.26,
   friction: 0.05,
   turnRate: 0.042,
+  onFootSpeed: 2.2,
+  mode: "driving",
 };
 
 const controls = {
   accelerate: false,
   brake: false,
   steer: 0,
+  moveX: 0,
+  moveY: 0,
 };
 
 const keyState = new Set();
@@ -60,10 +65,65 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function getNearestParkedCar(px, py) {
+  const block = world.block;
+  let nearest = null;
+
+  const blockX = Math.floor(px / block);
+  const blockY = Math.floor(py / block);
+
+  for (let gx = blockX - 1; gx <= blockX + 1; gx += 1) {
+    for (let gy = blockY - 1; gy <= blockY + 1; gy += 1) {
+      const x = gx * block;
+      const y = gy * block;
+      const carCount = ((x + y) / block) % 4;
+
+      for (let i = 0; i < carCount; i += 1) {
+        const carX = x + 8 + i * 15 + 5;
+        const carY = y + 10 + 9;
+        const dx = px - carX;
+        const dy = py - carY;
+        const dist = Math.hypot(dx, dy);
+
+        if (!nearest || dist < nearest.dist) {
+          nearest = { x: carX, y: carY, dist };
+        }
+      }
+    }
+  }
+
+  return nearest;
+}
+
+function canEnterNearbyCar() {
+  const nearest = getNearestParkedCar(player.x, player.y);
+  return Boolean(nearest && nearest.dist <= 52);
+}
+
+function syncControlUIByMode() {
+  const driving = player.mode === "driving";
+  const canEnterCar = !driving && canEnterNearbyCar();
+
+  accelerateBtn.disabled = !driving;
+  brakeBtn.disabled = !driving;
+  accelerateBtn.classList.toggle("disabled", !driving);
+  brakeBtn.classList.toggle("disabled", !driving);
+
+  actionBtn.textContent = driving ? "Выйти" : "Сесть";
+  actionBtn.disabled = !driving && !canEnterCar;
+  actionBtn.classList.toggle("disabled", actionBtn.disabled);
+  actionBtn.classList.toggle("active", !actionBtn.disabled);
+}
+
 function setupKeyboard() {
   window.addEventListener("keydown", (event) => {
     keyState.add(event.code);
+
+    if (event.code === "KeyE") {
+      handleActionButton();
+    }
   });
+
   window.addEventListener("keyup", (event) => {
     keyState.delete(event.code);
   });
@@ -73,6 +133,7 @@ function setupButtons() {
   const bindButton = (button, key) => {
     const start = (event) => {
       event.preventDefault();
+      if (button.disabled) return;
       controls[key] = true;
       button.classList.add("active");
     };
@@ -91,6 +152,12 @@ function setupButtons() {
 
   bindButton(accelerateBtn, "accelerate");
   bindButton(brakeBtn, "brake");
+
+  actionBtn.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    if (actionBtn.disabled) return;
+    handleActionButton();
+  });
 }
 
 function setupJoystick() {
@@ -107,6 +174,8 @@ function setupJoystick() {
     joystickState.x = 0;
     joystickState.y = 0;
     controls.steer = 0;
+    controls.moveX = 0;
+    controls.moveY = 0;
     joystickStick.style.transform = "translate(-50%, -50%)";
   };
 
@@ -120,8 +189,9 @@ function setupJoystick() {
     joystickState.x = dx * ratio;
     joystickState.y = dy * ratio;
 
-    const steerNorm = clamp(joystickState.x / maxDist, -1, 1);
-    controls.steer = steerNorm;
+    controls.steer = clamp(joystickState.x / maxDist, -1, 1);
+    controls.moveX = clamp(joystickState.x / maxDist, -1, 1);
+    controls.moveY = clamp(joystickState.y / maxDist, -1, 1);
 
     joystickStick.style.transform = `translate(calc(-50% + ${joystickState.x}px), calc(-50% + ${joystickState.y}px))`;
   };
@@ -153,56 +223,99 @@ function setupJoystick() {
 }
 
 function updateControlsFromKeyboard() {
-  if (!controls.accelerate) {
+  const driving = player.mode === "driving";
+
+  if (driving && !controls.accelerate) {
     controls.accelerate = keyState.has("KeyW") || keyState.has("ArrowUp");
   }
 
-  if (!controls.brake) {
+  if (driving && !controls.brake) {
     controls.brake = keyState.has("KeyS") || keyState.has("ArrowDown");
+  }
+
+  if (!driving) {
+    controls.accelerate = false;
+    controls.brake = false;
   }
 
   if (!joystickState.active) {
     const left = keyState.has("KeyA") || keyState.has("ArrowLeft");
     const right = keyState.has("KeyD") || keyState.has("ArrowRight");
+    const up = keyState.has("KeyW") || keyState.has("ArrowUp");
+    const down = keyState.has("KeyS") || keyState.has("ArrowDown");
+
     controls.steer = (right ? 1 : 0) + (left ? -1 : 0);
+    controls.moveX = controls.steer;
+    controls.moveY = (down ? 1 : 0) + (up ? -1 : 0);
   }
+}
+
+function handleActionButton() {
+  if (player.mode === "driving") {
+    player.mode = "onFoot";
+    player.speed = 0;
+    player.x += Math.cos(player.angle + Math.PI / 2) * 24;
+    player.y += Math.sin(player.angle + Math.PI / 2) * 24;
+  } else if (canEnterNearbyCar()) {
+    player.mode = "driving";
+    controls.moveX = 0;
+    controls.moveY = 0;
+  }
+
+  syncControlUIByMode();
 }
 
 function updatePhysics() {
   updateControlsFromKeyboard();
 
-  if (controls.accelerate) {
-    player.speed += player.accel;
-  }
+  if (player.mode === "driving") {
+    if (controls.accelerate) {
+      player.speed += player.accel;
+    }
 
-  if (controls.brake) {
-    if (player.speed > 0) player.speed -= player.brake;
-    else player.speed -= player.accel * 0.65;
-  }
+    if (controls.brake) {
+      if (player.speed > 0) player.speed -= player.brake;
+      else player.speed -= player.accel * 0.65;
+    }
 
-  if (!controls.accelerate && !controls.brake) {
-    if (Math.abs(player.speed) < player.friction) {
-      player.speed = 0;
-    } else {
-      player.speed -= Math.sign(player.speed) * player.friction;
+    if (!controls.accelerate && !controls.brake) {
+      if (Math.abs(player.speed) < player.friction) {
+        player.speed = 0;
+      } else {
+        player.speed -= Math.sign(player.speed) * player.friction;
+      }
+    }
+
+    player.speed = clamp(player.speed, -2.6, player.maxSpeed);
+
+    if (player.speed !== 0) {
+      const steerFactor = clamp(Math.abs(player.speed) / player.maxSpeed, 0.22, 1);
+      player.angle += controls.steer * player.turnRate * steerFactor;
+    }
+
+    player.x += Math.cos(player.angle) * player.speed;
+    player.y += Math.sin(player.angle) * player.speed;
+  } else {
+    player.speed = 0;
+
+    const moveLen = Math.hypot(controls.moveX, controls.moveY);
+    if (moveLen > 0) {
+      const normX = controls.moveX / moveLen;
+      const normY = controls.moveY / moveLen;
+
+      player.x += normX * player.onFootSpeed;
+      player.y += normY * player.onFootSpeed;
+      player.angle = Math.atan2(normY, normX) + Math.PI / 2;
     }
   }
-
-  player.speed = clamp(player.speed, -2.6, player.maxSpeed);
-
-  if (player.speed !== 0) {
-    const steerFactor = clamp(Math.abs(player.speed) / player.maxSpeed, 0.22, 1);
-    player.angle += controls.steer * player.turnRate * steerFactor;
-  }
-
-  player.x += Math.cos(player.angle) * player.speed;
-  player.y += Math.sin(player.angle) * player.speed;
 
   player.x = clamp(player.x, 40, world.width - 40);
   player.y = clamp(player.y, 40, world.height - 40);
 
-  speedEl.textContent = Math.round(Math.abs(player.speed) * 18);
+  speedEl.textContent = player.mode === "driving" ? Math.round(Math.abs(player.speed) * 18) : Math.round(player.onFootSpeed * Math.hypot(controls.moveX, controls.moveY) * 10);
   positionEl.textContent = `${Math.round(player.x)}, ${Math.round(player.y)}`;
+
+  syncControlUIByMode();
 }
 
 function drawWorld(cameraX, cameraY, viewW, viewH) {
@@ -262,20 +375,35 @@ function drawPlayer(cameraX, cameraY) {
   const drawX = player.x - cameraX;
   const drawY = player.y - cameraY;
 
-  ctx.save();
-  ctx.translate(drawX, drawY);
-  ctx.rotate(player.angle);
+  if (player.mode === "driving") {
+    ctx.save();
+    ctx.translate(drawX, drawY);
+    ctx.rotate(player.angle);
 
-  ctx.fillStyle = "#d7c94b";
-  ctx.fillRect(-player.width / 2, -player.height / 2, player.width, player.height);
+    ctx.fillStyle = "#d7c94b";
+    ctx.fillRect(-player.width / 2, -player.height / 2, player.width, player.height);
 
-  ctx.fillStyle = "#2a2f38";
-  ctx.fillRect(-player.width / 2 + 4, -player.height / 2 + 6, player.width - 8, player.height - 20);
+    ctx.fillStyle = "#2a2f38";
+    ctx.fillRect(-player.width / 2 + 4, -player.height / 2 + 6, player.width - 8, player.height - 20);
 
-  ctx.fillStyle = "#d83145";
-  ctx.fillRect(-3, -player.height / 2 + 2, 6, 10);
+    ctx.fillStyle = "#d83145";
+    ctx.fillRect(-3, -player.height / 2 + 2, 6, 10);
 
-  ctx.restore();
+    ctx.restore();
+  } else {
+    ctx.save();
+    ctx.translate(drawX, drawY);
+    ctx.rotate(player.angle);
+
+    ctx.fillStyle = "#7cc7ff";
+    ctx.fillRect(-9, -12, 18, 24);
+    ctx.fillStyle = "#f3d9b1";
+    ctx.beginPath();
+    ctx.arc(0, -18, 7, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
 }
 
 function gameLoop() {
@@ -296,4 +424,5 @@ function gameLoop() {
 setupKeyboard();
 setupButtons();
 setupJoystick();
+syncControlUIByMode();
 requestAnimationFrame(gameLoop);
