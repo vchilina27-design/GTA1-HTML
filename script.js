@@ -2,11 +2,13 @@ const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const speedEl = document.getElementById("speed");
 const positionEl = document.getElementById("position");
+const modeIndicatorEl = document.getElementById("mode-indicator");
 
 const joystickBase = document.getElementById("joystick-base");
 const joystickStick = document.getElementById("joystick-stick");
 const accelerateBtn = document.getElementById("btn-accelerate");
 const brakeBtn = document.getElementById("btn-brake");
+const exitBtn = document.getElementById("btn-exit");
 
 const world = {
   width: 2600,
@@ -29,10 +31,32 @@ const player = {
   turnRate: 0.042,
 };
 
+const character = {
+  x: player.x,
+  y: player.y,
+  angle: player.angle,
+  speedWalk: 2.25,
+  radius: 11,
+  nearVehicle: false,
+};
+
+const gameState = {
+  mode: "driving",
+};
+
 const controls = {
   accelerate: false,
   brake: false,
   steer: 0,
+};
+
+const onFootControls = {
+  moveX: 0,
+  moveY: 0,
+};
+
+const actionState = {
+  interactRequested: false,
 };
 
 const keyState = new Set();
@@ -63,6 +87,9 @@ function clamp(value, min, max) {
 function setupKeyboard() {
   window.addEventListener("keydown", (event) => {
     keyState.add(event.code);
+    if (!event.repeat && (event.code === "KeyE" || event.code === "Enter")) {
+      actionState.interactRequested = true;
+    }
   });
   window.addEventListener("keyup", (event) => {
     keyState.delete(event.code);
@@ -91,6 +118,21 @@ function setupButtons() {
 
   bindButton(accelerateBtn, "accelerate");
   bindButton(brakeBtn, "brake");
+
+  exitBtn.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    actionState.interactRequested = true;
+    exitBtn.classList.add("active");
+  });
+
+  const clearExit = (event) => {
+    event.preventDefault();
+    exitBtn.classList.remove("active");
+  };
+
+  exitBtn.addEventListener("pointerup", clearExit);
+  exitBtn.addEventListener("pointercancel", clearExit);
+  exitBtn.addEventListener("pointerleave", clearExit);
 }
 
 function setupJoystick() {
@@ -152,7 +194,7 @@ function setupJoystick() {
   updateCenter();
 }
 
-function updateControlsFromKeyboard() {
+function updateDrivingControls() {
   if (!controls.accelerate) {
     controls.accelerate = keyState.has("KeyW") || keyState.has("ArrowUp");
   }
@@ -168,41 +210,119 @@ function updateControlsFromKeyboard() {
   }
 }
 
+function updateOnFootControls() {
+  const left = keyState.has("KeyA") || keyState.has("ArrowLeft");
+  const right = keyState.has("KeyD") || keyState.has("ArrowRight");
+  const up = keyState.has("KeyW") || keyState.has("ArrowUp");
+  const down = keyState.has("KeyS") || keyState.has("ArrowDown");
+
+  onFootControls.moveX = (right ? 1 : 0) + (left ? -1 : 0);
+  onFootControls.moveY = (down ? 1 : 0) + (up ? -1 : 0);
+
+  if (joystickState.active) {
+    onFootControls.moveX = clamp(joystickState.x / joystickState.radius, -1, 1);
+    onFootControls.moveY = clamp(joystickState.y / joystickState.radius, -1, 1);
+  }
+}
+
+function exitVehicle() {
+  const sideOffset = player.width * 1.25;
+  character.x = player.x + Math.cos(player.angle + Math.PI / 2) * sideOffset;
+  character.y = player.y + Math.sin(player.angle + Math.PI / 2) * sideOffset;
+  character.angle = player.angle;
+  character.x = clamp(character.x, character.radius, world.width - character.radius);
+  character.y = clamp(character.y, character.radius, world.height - character.radius);
+  gameState.mode = "onFoot";
+}
+
+function enterVehicle() {
+  player.speed = 0;
+  gameState.mode = "driving";
+}
+
+function handleModeToggle() {
+  if (!actionState.interactRequested) return;
+
+  if (gameState.mode === "driving") {
+    exitVehicle();
+  } else if (character.nearVehicle) {
+    enterVehicle();
+  }
+
+  actionState.interactRequested = false;
+}
+
 function updatePhysics() {
-  updateControlsFromKeyboard();
+  handleModeToggle();
 
-  if (controls.accelerate) {
-    player.speed += player.accel;
-  }
+  if (gameState.mode === "driving") {
+    updateDrivingControls();
 
-  if (controls.brake) {
-    if (player.speed > 0) player.speed -= player.brake;
-    else player.speed -= player.accel * 0.65;
-  }
-
-  if (!controls.accelerate && !controls.brake) {
-    if (Math.abs(player.speed) < player.friction) {
-      player.speed = 0;
-    } else {
-      player.speed -= Math.sign(player.speed) * player.friction;
+    if (controls.accelerate) {
+      player.speed += player.accel;
     }
+
+    if (controls.brake) {
+      if (player.speed > 0) player.speed -= player.brake;
+      else player.speed -= player.accel * 0.65;
+    }
+
+    if (!controls.accelerate && !controls.brake) {
+      if (Math.abs(player.speed) < player.friction) {
+        player.speed = 0;
+      } else {
+        player.speed -= Math.sign(player.speed) * player.friction;
+      }
+    }
+
+    player.speed = clamp(player.speed, -2.6, player.maxSpeed);
+
+    if (player.speed !== 0) {
+      const steerFactor = clamp(Math.abs(player.speed) / player.maxSpeed, 0.22, 1);
+      player.angle += controls.steer * player.turnRate * steerFactor;
+    }
+
+    player.x += Math.cos(player.angle) * player.speed;
+    player.y += Math.sin(player.angle) * player.speed;
+
+    player.x = clamp(player.x, 40, world.width - 40);
+    player.y = clamp(player.y, 40, world.height - 40);
+
+    const distanceToVehicle = Math.hypot(character.x - player.x, character.y - player.y);
+    character.nearVehicle = distanceToVehicle < 46;
+  } else {
+    updateOnFootControls();
+
+    const moveLength = Math.hypot(onFootControls.moveX, onFootControls.moveY) || 1;
+    const velocityX = (onFootControls.moveX / moveLength) * character.speedWalk;
+    const velocityY = (onFootControls.moveY / moveLength) * character.speedWalk;
+
+    character.x += velocityX;
+    character.y += velocityY;
+
+    if (onFootControls.moveX !== 0 || onFootControls.moveY !== 0) {
+      character.angle = Math.atan2(onFootControls.moveY, onFootControls.moveX);
+    }
+
+    character.x = clamp(character.x, character.radius, world.width - character.radius);
+    character.y = clamp(character.y, character.radius, world.height - character.radius);
+
+    const distanceToVehicle = Math.hypot(character.x - player.x, character.y - player.y);
+    character.nearVehicle = distanceToVehicle < 58;
+
+    controls.accelerate = false;
+    controls.brake = false;
+    controls.steer = 0;
+    player.speed = 0;
   }
 
-  player.speed = clamp(player.speed, -2.6, player.maxSpeed);
+  const trackedX = gameState.mode === "driving" ? player.x : character.x;
+  const trackedY = gameState.mode === "driving" ? player.y : character.y;
+  const trackedSpeed = gameState.mode === "driving" ? Math.abs(player.speed) * 18 : 0;
 
-  if (player.speed !== 0) {
-    const steerFactor = clamp(Math.abs(player.speed) / player.maxSpeed, 0.22, 1);
-    player.angle += controls.steer * player.turnRate * steerFactor;
-  }
-
-  player.x += Math.cos(player.angle) * player.speed;
-  player.y += Math.sin(player.angle) * player.speed;
-
-  player.x = clamp(player.x, 40, world.width - 40);
-  player.y = clamp(player.y, 40, world.height - 40);
-
-  speedEl.textContent = Math.round(Math.abs(player.speed) * 18);
-  positionEl.textContent = `${Math.round(player.x)}, ${Math.round(player.y)}`;
+  speedEl.textContent = Math.round(trackedSpeed);
+  positionEl.textContent = `${Math.round(trackedX)}, ${Math.round(trackedY)}`;
+  modeIndicatorEl.textContent = gameState.mode === "driving" ? "В машине" : "Пешком";
 }
 
 function drawWorld(cameraX, cameraY, viewW, viewH) {
@@ -278,17 +398,45 @@ function drawPlayer(cameraX, cameraY) {
   ctx.restore();
 }
 
+function drawCharacter(cameraX, cameraY) {
+  if (gameState.mode !== "onFoot") return;
+
+  const drawX = character.x - cameraX;
+  const drawY = character.y - cameraY;
+
+  ctx.save();
+  ctx.translate(drawX, drawY);
+
+  ctx.fillStyle = "#f3d9b1";
+  ctx.beginPath();
+  ctx.arc(0, 0, character.radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#222";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(Math.cos(character.angle) * (character.radius + 6), Math.sin(character.angle) * (character.radius + 6));
+  ctx.stroke();
+
+  ctx.restore();
+}
+
 function gameLoop() {
   const viewW = window.innerWidth;
   const viewH = window.innerHeight;
 
   updatePhysics();
 
-  const cameraX = clamp(player.x - viewW / 2, 0, world.width - viewW);
-  const cameraY = clamp(player.y - viewH / 2, 0, world.height - viewH);
+  const targetX = gameState.mode === "driving" ? player.x : character.x;
+  const targetY = gameState.mode === "driving" ? player.y : character.y;
+
+  const cameraX = clamp(targetX - viewW / 2, 0, world.width - viewW);
+  const cameraY = clamp(targetY - viewH / 2, 0, world.height - viewH);
 
   drawWorld(cameraX, cameraY, viewW, viewH);
   drawPlayer(cameraX, cameraY);
+  drawCharacter(cameraX, cameraY);
 
   requestAnimationFrame(gameLoop);
 }
