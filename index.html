@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>GTA 1 Mobile Prototype</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="hud">
+    <div id="hud-left">
+      <h1>GTA 1 Mobile</h1>
+      <p>WASD / стрелки + тач-джойстик</p>
+    </div>
+    <div id="hud-right">
+      <div>Скорость: <span id="speed">0</span></div>
+      <div>Позиция: <span id="position">0, 0</span></div>
+    </div>
+  </div>
+
+  <canvas id="game" width="1280" height="720" aria-label="Игровое поле"></canvas>
+
+  <div id="mobile-controls" aria-label="Мобильное управление">
+    <div id="joystick-base">
+      <div id="joystick-stick"></div>
+    </div>
+
+    <div id="action-buttons">
+      <button id="btn-accelerate" class="control-btn">Газ</button>
+      <button id="btn-brake" class="control-btn">Тормоз</button>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
