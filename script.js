@@ -3,6 +3,8 @@ const ctx = canvas.getContext("2d");
 const speedEl = document.getElementById("speed");
 const positionEl = document.getElementById("position");
 const modeEl = document.getElementById("mode");
+const wantedEl = document.getElementById("wanted");
+const policeCountEl = document.getElementById("police-count");
 
 const joystickBase = document.getElementById("joystick-base");
 const joystickStick = document.getElementById("joystick-stick");
@@ -17,6 +19,16 @@ const world = {
   road: 72,
 };
 
+ codex/fix-all-bugs-and-errors-0b69gl
+const policeStation = {
+  x: 280,
+  y: 280,
+  width: 280,
+  height: 210,
+};
+
+
+ codex/-gta-1-cio80j
 const car = {
   x: world.width / 2,
   y: world.height / 2,
@@ -40,6 +52,9 @@ const character = {
 
 const gameState = {
   mode: "driving",
+  wantedLevel: 0,
+  message: "",
+  messageTimer: 0,
 };
 
 const keyboard = {
@@ -65,6 +80,38 @@ const joystickState = {
   y: 0,
   radius: 52,
 };
+
+function randomRange(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function createNpc(kind) {
+  const npc = {
+    kind,
+    x: randomRange(160, world.width - 160),
+    y: randomRange(160, world.height - 160),
+    dir: randomRange(0, Math.PI * 2),
+    speed: kind === "police" ? 1.7 : 1.1,
+    state: "wander",
+    turnTimer: randomRange(40, 140),
+    disabledTimer: 0,
+  };
+
+  if (
+    npc.x > policeStation.x - 120 &&
+    npc.x < policeStation.x + policeStation.width + 120 &&
+    npc.y > policeStation.y - 120 &&
+    npc.y < policeStation.y + policeStation.height + 120
+  ) {
+    npc.x += 300;
+    npc.y += 240;
+  }
+
+  return npc;
+}
+
+const pedestrians = Array.from({ length: 22 }, () => createNpc("civil"));
+const policeUnits = Array.from({ length: 6 }, () => createNpc("police"));
 
 function resizeCanvas() {
   const dpr = Math.max(window.devicePixelRatio || 1, 1);
@@ -296,6 +343,78 @@ function updateOnFoot() {
   }
 }
 
+function setAlert(message) {
+  gameState.message = message;
+  gameState.messageTimer = 180;
+}
+
+function increaseWanted(amount) {
+  gameState.wantedLevel = clamp(gameState.wantedLevel + amount, 0, 5);
+}
+
+function updateNpcMovement(npc, targetX, targetY, chaseDistance) {
+  if (npc.disabledTimer > 0) {
+    npc.disabledTimer -= 1;
+    return;
+  }
+
+ codex/fix-all-bugs-and-errors-0b69gl
+  const toTarget = distance(npc.x, npc.y, targetX, targetY);
+
+  if (npc.kind === "police" && (gameState.wantedLevel > 0 || toTarget < chaseDistance)) {
+    npc.state = "chase";
+    npc.dir = Math.atan2(targetY - npc.y, targetX - npc.x);
+  } else {
+    npc.state = "wander";
+    npc.turnTimer -= 1;
+    if (npc.turnTimer <= 0) {
+      npc.turnTimer = randomRange(50, 150);
+      npc.dir += randomRange(-1.1, 1.1);
+    }
+  }
+
+  const speedMul = npc.state === "chase" ? 1.45 : 1;
+  npc.x += Math.cos(npc.dir) * npc.speed * speedMul;
+  npc.y += Math.sin(npc.dir) * npc.speed * speedMul;
+
+  npc.x = clamp(npc.x, 35, world.width - 35);
+  npc.y = clamp(npc.y, 35, world.height - 35);
+}
+
+function updateNpcs() {
+  const targetX = gameState.mode === "driving" ? car.x : character.x;
+  const targetY = gameState.mode === "driving" ? car.y : character.y;
+
+  for (const npc of pedestrians) {
+    updateNpcMovement(npc, targetX, targetY, 90);
+
+    if (gameState.mode === "driving" && npc.disabledTimer <= 0) {
+      const hitDistance = distance(npc.x, npc.y, car.x, car.y);
+      if (hitDistance < 28 && Math.abs(car.speed) > 2.2) {
+        npc.disabledTimer = 180;
+        increaseWanted(1);
+        setAlert("Полиция: вы сбили пешехода!");
+      }
+    }
+  }
+
+  for (const cop of policeUnits) {
+    updateNpcMovement(cop, targetX, targetY, 300);
+
+    const arrestDistance = distance(cop.x, cop.y, targetX, targetY);
+    if (gameState.wantedLevel > 0 && arrestDistance < 25 && gameState.mode === "onFoot") {
+      gameState.wantedLevel = 0;
+      character.x = policeStation.x + policeStation.width / 2;
+      character.y = policeStation.y + policeStation.height + 24;
+      setAlert("Вас задержали и доставили в участок");
+    }
+  }
+
+  if (gameState.wantedLevel > 0 && Math.random() < 0.001) {
+    gameState.wantedLevel -= 1;
+  }
+}
+
 function updateActionButtonState() {
   if (gameState.mode === "driving") {
     actionBtn.textContent = "Выйти";
@@ -303,11 +422,32 @@ function updateActionButtonState() {
     return;
   }
 
+
+ codex/-gta-1-cio80j
   const canEnter = distance(character.x, character.y, car.x, car.y) < 56;
   actionBtn.textContent = canEnter ? "Сесть" : "Подойти";
   actionBtn.classList.toggle("hidden", !canEnter);
 }
 
+ codex/fix-all-bugs-and-errors-0b69gl
+function drawMessage(viewW) {
+  if (gameState.messageTimer <= 0) return;
+
+  gameState.messageTimer -= 1;
+  ctx.save();
+  ctx.font = "bold 18px Inter, sans-serif";
+  ctx.textAlign = "center";
+  const text = gameState.message;
+  const width = ctx.measureText(text).width + 24;
+  ctx.fillStyle = "rgba(0,0,0,0.62)";
+  ctx.fillRect(viewW / 2 - width / 2, 82, width, 34);
+  ctx.fillStyle = "#ff8b8b";
+  ctx.fillText(text, viewW / 2, 105);
+  ctx.restore();
+}
+
+
+ codex/-gta-1-cio80j
 function updatePhysics() {
   if (gameState.mode === "driving") updateDriving();
   else updateOnFoot();
@@ -317,6 +457,7 @@ function updatePhysics() {
   character.x = clamp(character.x, 25, world.width - 25);
   character.y = clamp(character.y, 25, world.height - 25);
 
+  updateNpcs();
   updateActionButtonState();
 
   const activeX = gameState.mode === "driving" ? car.x : character.x;
@@ -325,6 +466,8 @@ function updatePhysics() {
 
   speedEl.textContent = Math.round(activeSpeed);
   positionEl.textContent = `${Math.round(activeX)}, ${Math.round(activeY)}`;
+  wantedEl.textContent = gameState.wantedLevel;
+  policeCountEl.textContent = policeUnits.length;
 }
 
 function drawRoadMarkings(drawX, drawY, block, road) {
@@ -334,6 +477,28 @@ function drawRoadMarkings(drawX, drawY, block, road) {
     ctx.fillRect(drawX + block / 2 - 2, drawY + offset, 4, 18);
     ctx.fillRect(drawX + offset, drawY + block / 2 - 2, 18, 4);
   }
+ codex/fix-all-bugs-and-errors-0b69gl
+}
+
+function drawPoliceStation(cameraX, cameraY) {
+  const x = policeStation.x - cameraX;
+  const y = policeStation.y - cameraY;
+
+  ctx.fillStyle = "#2e3b5a";
+  ctx.fillRect(x, y, policeStation.width, policeStation.height);
+
+  ctx.fillStyle = "#9db6ff";
+  ctx.fillRect(x + 12, y + 14, policeStation.width - 24, 20);
+
+  ctx.fillStyle = "#19233b";
+  ctx.fillRect(x + policeStation.width / 2 - 24, y + policeStation.height - 52, 48, 52);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 16px Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("ПОЛИЦИЯ", x + policeStation.width / 2, y + 29);
+
+ codex/-gta-1-cio80j
 }
 
 function drawCityBlock(drawX, drawY, block, road, x, y) {
@@ -387,6 +552,11 @@ function drawWorld(cameraX, cameraY, viewW, viewH) {
     }
   }
 
+ codex/fix-all-bugs-and-errors-0b69gl
+  drawPoliceStation(cameraX, cameraY);
+
+
+ codex/-gta-1-cio80j
   ctx.strokeStyle = "rgba(255,255,255,0.09)";
   ctx.lineWidth = 1;
   for (let x = startX; x < cameraX + viewW + block; x += block) {
@@ -401,6 +571,33 @@ function drawWorld(cameraX, cameraY, viewW, viewH) {
     ctx.lineTo(viewW, y - cameraY);
     ctx.stroke();
   }
+ codex/fix-all-bugs-and-errors-0b69gl
+}
+
+function drawNpc(cameraX, cameraY, npc) {
+  const drawX = npc.x - cameraX;
+  const drawY = npc.y - cameraY;
+
+  ctx.save();
+  ctx.translate(drawX, drawY);
+  ctx.rotate(npc.dir + Math.PI / 2);
+
+  ctx.fillStyle = npc.kind === "police" ? "#5f8dff" : "#7be08f";
+  if (npc.disabledTimer > 0) ctx.fillStyle = "#9f6b6b";
+
+  ctx.beginPath();
+  ctx.arc(0, -5, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillRect(-4, 1, 8, 12);
+
+  if (npc.kind === "police") {
+    ctx.fillStyle = "#c6d8ff";
+    ctx.fillRect(-4, 3, 8, 2);
+  }
+
+  ctx.restore();
+
+ codex/-gta-1-cio80j
 }
 
 function drawCar(cameraX, cameraY) {
@@ -459,8 +656,11 @@ function gameLoop() {
   const cameraY = clamp(targetY - viewH / 2, 0, world.height - viewH);
 
   drawWorld(cameraX, cameraY, viewW, viewH);
+  for (const npc of pedestrians) drawNpc(cameraX, cameraY, npc);
+  for (const cop of policeUnits) drawNpc(cameraX, cameraY, cop);
   drawCar(cameraX, cameraY);
   if (gameState.mode === "onFoot") drawCharacter(cameraX, cameraY);
+  drawMessage(viewW);
 
   requestAnimationFrame(gameLoop);
 }
