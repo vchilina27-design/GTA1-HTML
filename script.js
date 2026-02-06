@@ -19,6 +19,7 @@ const world = {
   road: 72,
 };
 
+ codex/fix-all-bugs-and-errors-0b69gl
 const policeStation = {
   x: 280,
   y: 280,
@@ -26,6 +27,8 @@ const policeStation = {
   height: 210,
 };
 
+
+ codex/-gta-1-cio80j
 const car = {
   x: world.width / 2,
   y: world.height / 2,
@@ -355,6 +358,7 @@ function updateNpcMovement(npc, targetX, targetY, chaseDistance) {
     return;
   }
 
+ codex/fix-all-bugs-and-errors-0b69gl
   const toTarget = distance(npc.x, npc.y, targetX, targetY);
 
   if (npc.kind === "police" && (gameState.wantedLevel > 0 || toTarget < chaseDistance)) {
@@ -418,11 +422,14 @@ function updateActionButtonState() {
     return;
   }
 
+
+ codex/-gta-1-cio80j
   const canEnter = distance(character.x, character.y, car.x, car.y) < 56;
   actionBtn.textContent = canEnter ? "Сесть" : "Подойти";
   actionBtn.classList.toggle("hidden", !canEnter);
 }
 
+ codex/fix-all-bugs-and-errors-0b69gl
 function drawMessage(viewW) {
   if (gameState.messageTimer <= 0) return;
 
@@ -439,6 +446,8 @@ function drawMessage(viewW) {
   ctx.restore();
 }
 
+
+ codex/-gta-1-cio80j
 function updatePhysics() {
   if (gameState.mode === "driving") updateDriving();
   else updateOnFoot();
@@ -468,6 +477,7 @@ function drawRoadMarkings(drawX, drawY, block, road) {
     ctx.fillRect(drawX + block / 2 - 2, drawY + offset, 4, 18);
     ctx.fillRect(drawX + offset, drawY + block / 2 - 2, 18, 4);
   }
+ codex/fix-all-bugs-and-errors-0b69gl
 }
 
 function drawPoliceStation(cameraX, cameraY) {
@@ -487,6 +497,8 @@ function drawPoliceStation(cameraX, cameraY) {
   ctx.font = "bold 16px Inter, sans-serif";
   ctx.textAlign = "center";
   ctx.fillText("ПОЛИЦИЯ", x + policeStation.width / 2, y + 29);
+
+ codex/-gta-1-cio80j
 }
 
 function drawCityBlock(drawX, drawY, block, road, x, y) {
@@ -540,8 +552,11 @@ function drawWorld(cameraX, cameraY, viewW, viewH) {
     }
   }
 
+ codex/fix-all-bugs-and-errors-0b69gl
   drawPoliceStation(cameraX, cameraY);
 
+
+ codex/-gta-1-cio80j
   ctx.strokeStyle = "rgba(255,255,255,0.09)";
   ctx.lineWidth = 1;
   for (let x = startX; x < cameraX + viewW + block; x += block) {
@@ -556,6 +571,7 @@ function drawWorld(cameraX, cameraY, viewW, viewH) {
     ctx.lineTo(viewW, y - cameraY);
     ctx.stroke();
   }
+ codex/fix-all-bugs-and-errors-0b69gl
 }
 
 function drawNpc(cameraX, cameraY, npc) {
@@ -580,6 +596,8 @@ function drawNpc(cameraX, cameraY, npc) {
   }
 
   ctx.restore();
+
+ codex/-gta-1-cio80j
 }
 
 function drawCar(cameraX, cameraY) {
